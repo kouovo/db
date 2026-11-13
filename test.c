@@ -206,6 +206,79 @@ int main(void) {
         "  - 2 : 3\n"
         "db > ");
 
+  check("keeps keys sorted when inserted out of order",
+        "insert 3 user3 person3@example.com\n"
+        "insert 1 user1 person1@example.com\n"
+        "insert 2 user2 person2@example.com\n"
+        ".btree\n"
+        ".exit\n",
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > BTree:\n"
+        "leaf (size 3)\n"
+        "  - 0 : 1\n"
+        "  - 1 : 2\n"
+        "  - 2 : 3\n"
+        "db > ");
+
+  // Inserting before existing cells shifts them: each row must still travel
+  // with its own key.
+  check("selects rows in key order with their own data",
+        "insert 5 user5 person5@example.com\n"
+        "insert 1 user1 person1@example.com\n"
+        "insert 3 user3 person3@example.com\n"
+        "insert 4 user4 person4@example.com\n"
+        "insert 2 user2 person2@example.com\n"
+        "select\n"
+        ".exit\n",
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > (1, user1, person1@example.com)\n"
+        "(2, user2, person2@example.com)\n"
+        "(3, user3, person3@example.com)\n"
+        "(4, user4, person4@example.com)\n"
+        "(5, user5, person5@example.com)\n"
+        "Executed.\n"
+        "db > ");
+
+  check("rejects a duplicate key",
+        "insert 1 user1 person1@example.com\n"
+        "insert 1 user1 person1@example.com\n"
+        "select\n"
+        ".exit\n",
+        "db > Executed.\n"
+        "db > Error: Duplicate key.\n"
+        "db > (1, user1, person1@example.com)\n"
+        "Executed.\n"
+        "db > ");
+
+  // The duplicate may sit at the start, middle or end of the node, and the
+  // rejected row must not replace the stored one.
+  check("rejects a duplicate key at any position",
+        "insert 1 user1 person1@example.com\n"
+        "insert 2 user2 person2@example.com\n"
+        "insert 3 user3 person3@example.com\n"
+        "insert 1 other other@example.com\n"
+        "insert 2 other other@example.com\n"
+        "insert 3 other other@example.com\n"
+        "select\n"
+        ".exit\n",
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > Error: Duplicate key.\n"
+        "db > Error: Duplicate key.\n"
+        "db > Error: Duplicate key.\n"
+        "db > (1, user1, person1@example.com)\n"
+        "(2, user2, person2@example.com)\n"
+        "(3, user3, person3@example.com)\n"
+        "Executed.\n"
+        "db > ");
+
   // Persistence: the second run reopens the file the first one wrote.
   unlink(DB_FILE);
   free(run_db_keep("insert 1 user1 person1@example.com\n"
@@ -226,17 +299,20 @@ int main(void) {
          strcmp(reopened, persisted) == 0, persisted, reopened);
   free(reopened);
 
-  // A third run appends to what is already on disk.
+  // A third run inserts into what is already on disk, and still sees the
+  // stored keys as duplicates.
   char *appended = run_db_keep("insert 3 user3 person3@example.com\n"
+                               "insert 2 other other@example.com\n"
                                "select\n"
                                ".exit\n");
   const char *appended_expected = "db > Executed.\n"
+                                  "db > Error: Duplicate key.\n"
                                   "db > (1, user1, person1@example.com)\n"
                                   "(2, user2, person2@example.com)\n"
                                   "(3, user3, person3@example.com)\n"
                                   "Executed.\n"
                                   "db > ";
-  report("appends to a reopened database",
+  report("inserts into a reopened database",
          strcmp(appended, appended_expected) == 0, appended_expected,
          appended);
   free(appended);
