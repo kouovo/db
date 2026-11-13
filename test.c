@@ -187,7 +187,7 @@ int main(void) {
         ".btree\n"
         ".exit\n",
         "db > BTree:\n"
-        "leaf (size 0)\n"
+        "- leaf (size 0)\n"
         "db > ");
 
   check("prints the structure of a one-node btree",
@@ -200,10 +200,10 @@ int main(void) {
         "db > Executed.\n"
         "db > Executed.\n"
         "db > BTree:\n"
-        "leaf (size 3)\n"
-        "  - 0 : 1\n"
-        "  - 1 : 2\n"
-        "  - 2 : 3\n"
+        "- leaf (size 3)\n"
+        "  - 1\n"
+        "  - 2\n"
+        "  - 3\n"
         "db > ");
 
   check("keeps keys sorted when inserted out of order",
@@ -216,10 +216,10 @@ int main(void) {
         "db > Executed.\n"
         "db > Executed.\n"
         "db > BTree:\n"
-        "leaf (size 3)\n"
-        "  - 0 : 1\n"
-        "  - 1 : 2\n"
-        "  - 2 : 3\n"
+        "- leaf (size 3)\n"
+        "  - 1\n"
+        "  - 2\n"
+        "  - 3\n"
         "db > ");
 
   // Inserting before existing cells shifts them: each row must still travel
@@ -291,9 +291,9 @@ int main(void) {
                           "(2, user2, person2@example.com)\n"
                           "Executed.\n"
                           "db > BTree:\n"
-                          "leaf (size 2)\n"
-                          "  - 0 : 1\n"
-                          "  - 1 : 2\n"
+                          "- leaf (size 2)\n"
+                          "  - 1\n"
+                          "  - 2\n"
                           "db > ";
   report("keeps data after closing the connection",
          strcmp(reopened, persisted) == 0, persisted, reopened);
@@ -318,8 +318,8 @@ int main(void) {
   free(appended);
   unlink(DB_FILE);
 
-  // A leaf node holds LEAF_NODE_MAX_CELLS (13) rows and there is no splitting
-  // yet: 13 inserts succeed and all come back, the 14th is refused.
+  // A leaf node holds LEAF_NODE_MAX_CELLS (13) rows: 13 inserts succeed and
+  // all come back from a single leaf.
   enum { MAX_CELLS = 13 };
   char *script = malloc((MAX_CELLS + 1) * 64 + 32);
   char *full_expected = malloc((MAX_CELLS + 1) * 64 + 64);
@@ -339,12 +339,6 @@ int main(void) {
   strcpy(expected_cursor, "Executed.\ndb > ");
   check("fills a leaf node and reads every row back", script, full_expected);
 
-  sprintf(cursor, "insert %d user%d person%d@example.com\n.exit\n",
-          MAX_CELLS + 1, MAX_CELLS + 1, MAX_CELLS + 1);
-  check_tail("reports an error when the table is full", script,
-             "db > Executed.\n"
-             "db > Error: Table full.\n"
-             "db > ");
   free(script);
   free(full_expected);
 
