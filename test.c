@@ -177,9 +177,9 @@ int main(void) {
         "db > Constants:\n"
         "ROW_SIZE: 293\n"
         "COMMON_NODE_HEADER_SIZE: 6\n"
-        "LEAF_NODE_HEADER_SIZE: 10\n"
+        "LEAF_NODE_HEADER_SIZE: 14\n"
         "LEAF_NODE_CELL_SIZE: 297\n"
-        "LEAF_NODE_SPACE_FOR_CELLS: 4086\n"
+        "LEAF_NODE_SPACE_FOR_CELLS: 4082\n"
         "LEAF_NODE_MAX_CELLS: 13\n"
         "db > ");
 
@@ -313,8 +313,7 @@ int main(void) {
                                   "Executed.\n"
                                   "db > ";
   report("inserts into a reopened database",
-         strcmp(appended, appended_expected) == 0, appended_expected,
-         appended);
+         strcmp(appended, appended_expected) == 0, appended_expected, appended);
   free(appended);
   unlink(DB_FILE);
 
@@ -326,8 +325,8 @@ int main(void) {
   char *cursor = script;
   char *expected_cursor = full_expected;
   for (int i = 1; i <= MAX_CELLS; i++) {
-    cursor += sprintf(cursor, "insert %d user%d person%d@example.com\n", i, i,
-                      i);
+    cursor +=
+        sprintf(cursor, "insert %d user%d person%d@example.com\n", i, i, i);
     expected_cursor += sprintf(expected_cursor, "db > Executed.\n");
   }
   strcpy(cursor, "select\n.exit\n");
@@ -342,71 +341,126 @@ int main(void) {
   free(script);
   free(full_expected);
 
-  // One row past a full leaf splits it 7 / 7 under a new internal root,
-  // whose key is the largest key of the left leaf.
-  const char *split_tree = "db > BTree:\n"
-                           "- internal (size 1)\n"
-                           "  - leaf (size 7)\n"
-                           "    - 1\n"
-                           "    - 2\n"
-                           "    - 3\n"
-                           "    - 4\n"
-                           "    - 5\n"
-                           "    - 6\n"
-                           "    - 7\n"
-                           "  - key 7\n"
-                           "  - leaf (size 7)\n"
-                           "    - 8\n"
-                           "    - 9\n"
-                           "    - 10\n"
-                           "    - 11\n"
-                           "    - 12\n"
-                           "    - 13\n"
-                           "    - 14\n"
-                           "db > ";
+  // Multi-level tree tests. Buffers are sized for up to 32 inserts.
+  char tree_script[4096], tree_expected[4096];
+  char *ts, *te;
 
-  // From the book (part 10): the 14th insert splits the root, and the 15th
-  // needs internal node search, which is not implemented yet.
-  char split_script[2048];
-  char *split_cursor = split_script;
-  for (int i = 1; i <= MAX_CELLS + 1; i++) {
-    split_cursor += sprintf(split_cursor,
-                            "insert %d user%d person%d@example.com\n", i, i, i);
+  // From the book (part 11): the 14th insert splits the root into two
+  // leaves, and the 15th insert finds its leaf through the internal node.
+  ts = tree_script;
+  for (int i = 1; i <= 14; i++) {
+    ts += sprintf(ts, "insert %d user%d person%d@example.com\n", i, i, i);
   }
-  strcpy(split_cursor, ".btree\n"
-                       "insert 15 user15 person15@example.com\n"
-                       ".exit\n");
-  char three_leaf_expected[1024];
-  snprintf(three_leaf_expected, sizeof(three_leaf_expected),
-           "%sNeed to implement searching an internal node\n", split_tree);
+  strcpy(ts, ".btree\n"
+             "insert 15 user15 person15@example.com\n"
+             ".exit\n");
   check_tail("allows printing out the structure of a 3-leaf-node btree",
-             split_script, three_leaf_expected);
+             tree_script,
+             "db > BTree:\n"
+             "- internal (size 1)\n"
+             "  - leaf (size 7)\n"
+             "    - 1\n"
+             "    - 2\n"
+             "    - 3\n"
+             "    - 4\n"
+             "    - 5\n"
+             "    - 6\n"
+             "    - 7\n"
+             "  - key 7\n"
+             "  - leaf (size 7)\n"
+             "    - 8\n"
+             "    - 9\n"
+             "    - 10\n"
+             "    - 11\n"
+             "    - 12\n"
+             "    - 13\n"
+             "    - 14\n"
+             "db > Executed.\n"
+             "db > ");
 
-  // Inserting in reverse puts the new row at cell 0 of the full leaf, so
-  // every existing cell has to shift during the split.
-  split_cursor = split_script;
-  for (int i = MAX_CELLS + 1; i >= 1; i--) {
-    split_cursor += sprintf(split_cursor,
-                            "insert %d user%d person%d@example.com\n", i, i, i);
+  // From the book (part 12): select follows next_leaf from the first leaf
+  // into the second, and every row keeps its own data across the split.
+  ts = tree_script;
+  te = tree_expected;
+  for (int i = 1; i <= 15; i++) {
+    ts += sprintf(ts, "insert %d user%d person%d@example.com\n", i, i, i);
   }
-  strcpy(split_cursor, ".btree\n.exit\n");
-  check_tail("splits correctly when keys arrive in reverse order", split_script,
-             split_tree);
+  strcpy(ts, "select\n.exit\n");
+  te += sprintf(te, "db > ");
+  for (int i = 1; i <= 15; i++) {
+    te += sprintf(te, "(%d, user%d, person%d@example.com)\n", i, i, i);
+  }
+  strcpy(te, "Executed.\ndb > ");
+  check_tail("prints all rows in a multi-level tree", tree_script,
+             tree_expected);
 
-  // The split tree is written to disk and read back intact.
-  unlink(DB_FILE);
-  split_cursor = split_script;
-  for (int i = 1; i <= MAX_CELLS + 1; i++) {
-    split_cursor += sprintf(split_cursor,
-                            "insert %d user%d person%d@example.com\n", i, i, i);
+  // After a split the root is an internal node, so the duplicate check has
+  // to look in the leaf the key belongs to. Try the first and last key of
+  // each leaf, and make sure no stored row is replaced.
+  ts = tree_script;
+  for (int i = 1; i <= 14; i++) {
+    ts += sprintf(ts, "insert %d user%d person%d@example.com\n", i, i, i);
   }
-  strcpy(split_cursor, ".exit\n");
-  free(run_db_keep(split_script));
-  char *split_reopened = run_db_keep(".btree\n.exit\n");
-  report("keeps a split tree after closing the connection",
-         strcmp(split_reopened, split_tree) == 0, split_tree, split_reopened);
-  free(split_reopened);
-  unlink(DB_FILE);
+  int duplicates[] = {1, 7, 8, 14};
+  te = tree_expected;
+  for (size_t i = 0; i < sizeof(duplicates) / sizeof(duplicates[0]); i++) {
+    ts += sprintf(ts, "insert %d other other@example.com\n", duplicates[i]);
+    te += sprintf(te, "db > Error: Duplicate key.\n");
+  }
+  strcpy(ts, "select\n.exit\n");
+  te += sprintf(te, "db > ");
+  for (int i = 1; i <= 14; i++) {
+    te += sprintf(te, "(%d, user%d, person%d@example.com)\n", i, i, i);
+  }
+  strcpy(te, "Executed.\ndb > ");
+  check_tail("rejects a duplicate key after the root splits", tree_script,
+             tree_expected);
+
+  // From the book (part 13): splitting a non-root leaf now updates its
+  // parent. The script inserts keys out of order, so new cells land in the
+  // middle of the internal node, and the tree grows to four leaves.
+  int out_of_order[] = {18, 7,  10, 29, 23, 4,  14, 30, 15, 26,
+                        22, 19, 2,  1,  21, 11, 6,  20, 5,  8,
+                        9,  3,  12, 27, 17, 16, 13, 24, 25, 28};
+  ts = tree_script;
+  for (size_t i = 0; i < sizeof(out_of_order) / sizeof(out_of_order[0]);
+       i++) {
+    int k = out_of_order[i];
+    ts += sprintf(ts, "insert %d user%d person%d@example.com\n", k, k, k);
+  }
+  strcpy(ts, ".btree\n.exit\n");
+  te = tree_expected;
+  te += sprintf(te, "db > BTree:\n- internal (size 3)\n");
+  int leaf_ends[] = {7, 15, 22, 30};
+  int first = 1;
+  for (int leaf = 0; leaf < 4; leaf++) {
+    int last = leaf_ends[leaf];
+    te += sprintf(te, "  - leaf (size %d)\n", last - first + 1);
+    for (int k = first; k <= last; k++) {
+      te += sprintf(te, "    - %d\n", k);
+    }
+    if (leaf < 3) {
+      te += sprintf(te, "  - key %d\n", last);
+    }
+    first = last + 1;
+  }
+  strcpy(te, "db > ");
+  check_tail("allows printing out the structure of a 4-leaf-node btree",
+             tree_script, tree_expected);
+
+  // From the book (part 13): with 1400 inserts the root internal node runs
+  // out of room, and splitting an internal node is not implemented yet.
+  enum { MANY_ROWS = 1400 };
+  char *big_script = malloc(MANY_ROWS * 64 + 16);
+  char *bs = big_script;
+  for (int i = 1; i <= MANY_ROWS; i++) {
+    bs += sprintf(bs, "insert %d user%d person%d@example.com\n", i, i, i);
+  }
+  strcpy(bs, ".exit\n");
+  check_tail("prints error message when table is full", big_script,
+             "db > Executed.\n"
+             "db > Need to implement splitting internal node\n");
+  free(big_script);
 
   printf("\n%d passed, %d failed\n", pass, fail);
   return fail == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
