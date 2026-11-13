@@ -342,6 +342,73 @@ int main(void) {
   free(script);
   free(full_expected);
 
+  // One row past a full leaf splits it 7 / 7 under a new internal root,
+  // whose key is the largest key of the left leaf.
+  const char *split_tree = "db > BTree:\n"
+                           "- internal (size 1)\n"
+                           "  - leaf (size 7)\n"
+                           "    - 1\n"
+                           "    - 2\n"
+                           "    - 3\n"
+                           "    - 4\n"
+                           "    - 5\n"
+                           "    - 6\n"
+                           "    - 7\n"
+                           "  - key 7\n"
+                           "  - leaf (size 7)\n"
+                           "    - 8\n"
+                           "    - 9\n"
+                           "    - 10\n"
+                           "    - 11\n"
+                           "    - 12\n"
+                           "    - 13\n"
+                           "    - 14\n"
+                           "db > ";
+
+  char split_script[2048];
+  char *split_cursor = split_script;
+  for (int i = 1; i <= MAX_CELLS + 1; i++) {
+    split_cursor += sprintf(split_cursor,
+                            "insert %d user%d person%d@example.com\n", i, i, i);
+  }
+  strcpy(split_cursor, ".btree\n.exit\n");
+  check_tail("splits a full leaf node under a new internal root", split_script,
+             split_tree);
+
+  // Inserting in reverse puts the new row at cell 0 of the full leaf, so
+  // every existing cell has to shift during the split.
+  split_cursor = split_script;
+  for (int i = MAX_CELLS + 1; i >= 1; i--) {
+    split_cursor += sprintf(split_cursor,
+                            "insert %d user%d person%d@example.com\n", i, i, i);
+  }
+  strcpy(split_cursor, ".btree\n.exit\n");
+  check_tail("splits correctly when keys arrive in reverse order", split_script,
+             split_tree);
+
+  // The split tree is written to disk and read back intact.
+  unlink(DB_FILE);
+  split_cursor = split_script;
+  for (int i = 1; i <= MAX_CELLS + 1; i++) {
+    split_cursor += sprintf(split_cursor,
+                            "insert %d user%d person%d@example.com\n", i, i, i);
+  }
+  strcpy(split_cursor, ".exit\n");
+  free(run_db_keep(split_script));
+  char *split_reopened = run_db_keep(".btree\n.exit\n");
+  report("keeps a split tree after closing the connection",
+         strcmp(split_reopened, split_tree) == 0, split_tree, split_reopened);
+  free(split_reopened);
+  unlink(DB_FILE);
+
+  // Searching an internal node is not implemented yet, so the next insert
+  // after a split stops the program with a message.
+  strcpy(split_cursor, "insert 15 user15 person15@example.com\n.exit\n");
+  check_tail("reports that internal node search is not implemented",
+             split_script,
+             "db > Executed.\n"
+             "db > Need to implement searching an internal node\n");
+
   printf("\n%d passed, %d failed\n", pass, fail);
   return fail == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
