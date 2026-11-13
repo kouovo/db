@@ -365,15 +365,22 @@ int main(void) {
                            "    - 14\n"
                            "db > ";
 
+  // From the book (part 10): the 14th insert splits the root, and the 15th
+  // needs internal node search, which is not implemented yet.
   char split_script[2048];
   char *split_cursor = split_script;
   for (int i = 1; i <= MAX_CELLS + 1; i++) {
     split_cursor += sprintf(split_cursor,
                             "insert %d user%d person%d@example.com\n", i, i, i);
   }
-  strcpy(split_cursor, ".btree\n.exit\n");
-  check_tail("splits a full leaf node under a new internal root", split_script,
-             split_tree);
+  strcpy(split_cursor, ".btree\n"
+                       "insert 15 user15 person15@example.com\n"
+                       ".exit\n");
+  char three_leaf_expected[1024];
+  snprintf(three_leaf_expected, sizeof(three_leaf_expected),
+           "%sNeed to implement searching an internal node\n", split_tree);
+  check_tail("allows printing out the structure of a 3-leaf-node btree",
+             split_script, three_leaf_expected);
 
   // Inserting in reverse puts the new row at cell 0 of the full leaf, so
   // every existing cell has to shift during the split.
@@ -400,14 +407,6 @@ int main(void) {
          strcmp(split_reopened, split_tree) == 0, split_tree, split_reopened);
   free(split_reopened);
   unlink(DB_FILE);
-
-  // Searching an internal node is not implemented yet, so the next insert
-  // after a split stops the program with a message.
-  strcpy(split_cursor, "insert 15 user15 person15@example.com\n.exit\n");
-  check_tail("reports that internal node search is not implemented",
-             split_script,
-             "db > Executed.\n"
-             "db > Need to implement searching an internal node\n");
 
   printf("\n%d passed, %d failed\n", pass, fail);
   return fail == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
