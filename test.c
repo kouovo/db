@@ -14,11 +14,11 @@ static int pass = 0;
 static int fail = 0;
 
 // Runs ./db with `input` on stdin and returns everything it wrote to stdout.
+// Leaves DB_FILE in place, so consecutive calls share one database.
 // The caller frees the result.
-static char *run_db(const char *input) {
+static char *run_db_keep(const char *input) {
   // Input goes through a temp file rather than a pipe, so a large script
   // cannot deadlock against the child's output.
-  unlink(DB_FILE); // every run starts from an empty database
   FILE *in = tmpfile();
   int out[2];
   if (in == NULL || pipe(out) != 0) {
@@ -61,11 +61,18 @@ static char *run_db(const char *input) {
 
   int status;
   waitpid(pid, &status, 0);
-  unlink(DB_FILE);
   if (WIFEXITED(status) && WEXITSTATUS(status) == 127) {
     fprintf(stderr, "Could not run %s. Build it first.\n", DB);
     exit(EXIT_FAILURE);
   }
+  return output;
+}
+
+// Like run_db_keep, but starts from an empty database and removes it after.
+static char *run_db(const char *input) {
+  unlink(DB_FILE);
+  char *output = run_db_keep(input);
+  unlink(DB_FILE);
   return output;
 }
 
@@ -158,18 +165,112 @@ int main(void) {
         "db > Executed.\n"
         "db > ");
 
-  // Table full: insert 1401 rows and look only at the end of the output.
-  char *script = malloc(1401 * 64 + 16);
+  check("selects nothing from an empty table",
+        "select\n"
+        ".exit\n",
+        "db > Executed.\n"
+        "db > ");
+
+  check("prints constants",
+        ".constants\n"
+        ".exit\n",
+        "db > Constants:\n"
+        "ROW_SIZE: 293\n"
+        "COMMON_NODE_HEADER_SIZE: 6\n"
+        "LEAF_NODE_HEADER_SIZE: 10\n"
+        "LEAF_NODE_CELL_SIZE: 297\n"
+        "LEAF_NODE_SPACE_FOR_CELLS: 4086\n"
+        "LEAF_NODE_MAX_CELLS: 13\n"
+        "db > ");
+
+  check("prints an empty leaf node",
+        ".btree\n"
+        ".exit\n",
+        "db > BTree:\n"
+        "leaf (size 0)\n"
+        "db > ");
+
+  check("prints the structure of a one-node btree",
+        "insert 1 user1 person1@example.com\n"
+        "insert 2 user2 person2@example.com\n"
+        "insert 3 user3 person3@example.com\n"
+        ".btree\n"
+        ".exit\n",
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > Executed.\n"
+        "db > BTree:\n"
+        "leaf (size 3)\n"
+        "  - 0 : 1\n"
+        "  - 1 : 2\n"
+        "  - 2 : 3\n"
+        "db > ");
+
+  // Persistence: the second run reopens the file the first one wrote.
+  unlink(DB_FILE);
+  free(run_db_keep("insert 1 user1 person1@example.com\n"
+                   "insert 2 user2 person2@example.com\n"
+                   ".exit\n"));
+  char *reopened = run_db_keep("select\n"
+                               ".btree\n"
+                               ".exit\n");
+  const char *persisted = "db > (1, user1, person1@example.com)\n"
+                          "(2, user2, person2@example.com)\n"
+                          "Executed.\n"
+                          "db > BTree:\n"
+                          "leaf (size 2)\n"
+                          "  - 0 : 1\n"
+                          "  - 1 : 2\n"
+                          "db > ";
+  report("keeps data after closing the connection",
+         strcmp(reopened, persisted) == 0, persisted, reopened);
+  free(reopened);
+
+  // A third run appends to what is already on disk.
+  char *appended = run_db_keep("insert 3 user3 person3@example.com\n"
+                               "select\n"
+                               ".exit\n");
+  const char *appended_expected = "db > Executed.\n"
+                                  "db > (1, user1, person1@example.com)\n"
+                                  "(2, user2, person2@example.com)\n"
+                                  "(3, user3, person3@example.com)\n"
+                                  "Executed.\n"
+                                  "db > ";
+  report("appends to a reopened database",
+         strcmp(appended, appended_expected) == 0, appended_expected,
+         appended);
+  free(appended);
+  unlink(DB_FILE);
+
+  // A leaf node holds LEAF_NODE_MAX_CELLS (13) rows and there is no splitting
+  // yet: 13 inserts succeed and all come back, the 14th is refused.
+  enum { MAX_CELLS = 13 };
+  char *script = malloc((MAX_CELLS + 1) * 64 + 32);
+  char *full_expected = malloc((MAX_CELLS + 1) * 64 + 64);
   char *cursor = script;
-  for (int i = 1; i <= 1401; i++) {
+  char *expected_cursor = full_expected;
+  for (int i = 1; i <= MAX_CELLS; i++) {
     cursor += sprintf(cursor, "insert %d user%d person%d@example.com\n", i, i,
                       i);
+    expected_cursor += sprintf(expected_cursor, "db > Executed.\n");
   }
-  strcpy(cursor, ".exit\n");
+  strcpy(cursor, "select\n.exit\n");
+  expected_cursor += sprintf(expected_cursor, "db > ");
+  for (int i = 1; i <= MAX_CELLS; i++) {
+    expected_cursor += sprintf(expected_cursor,
+                               "(%d, user%d, person%d@example.com)\n", i, i, i);
+  }
+  strcpy(expected_cursor, "Executed.\ndb > ");
+  check("fills a leaf node and reads every row back", script, full_expected);
+
+  sprintf(cursor, "insert %d user%d person%d@example.com\n.exit\n",
+          MAX_CELLS + 1, MAX_CELLS + 1, MAX_CELLS + 1);
   check_tail("reports an error when the table is full", script,
+             "db > Executed.\n"
              "db > Error: Table full.\n"
              "db > ");
   free(script);
+  free(full_expected);
 
   printf("\n%d passed, %d failed\n", pass, fail);
   return fail == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
