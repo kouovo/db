@@ -12,7 +12,7 @@ gcc main.c -o db
 ## Usage
 
 ```
-$ ./db
+$ ./db mydb.db
 db > insert 1 user1 person1@example.com
 Executed.
 db > select
@@ -24,5 +24,5 @@ db > .exit
 ## Test
 
 ```sh
-./test.sh
+gcc test.c -o test_db && ./test_db
 ```
