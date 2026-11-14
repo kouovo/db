@@ -88,6 +88,23 @@ static void report(const char *name, int ok, const char *expected,
   }
 }
 
+// Appends one insert line per key to `s` and returns the new end of `s`.
+static char *append_inserts(char *s, const int *keys, size_t count) {
+  for (size_t i = 0; i < count; i++) {
+    s += sprintf(s, "insert %d user%d person%d@example.com\n", keys[i],
+                 keys[i], keys[i]);
+  }
+  return s;
+}
+
+// Appends the select output for keys first..last (ascending) to `s`.
+static char *append_rows(char *s, int first, int last) {
+  for (int k = first; k <= last; k++) {
+    s += sprintf(s, "(%d, user%d, person%d@example.com)\n", k, k, k);
+  }
+  return s;
+}
+
 // The whole output must equal `expected`.
 static void check(const char *name, const char *input, const char *expected) {
   char *actual = run_db(input);
@@ -186,7 +203,7 @@ int main(void) {
   check("prints an empty leaf node",
         ".btree\n"
         ".exit\n",
-        "db > BTree:\n"
+        "db > Tree:\n"
         "- leaf (size 0)\n"
         "db > ");
 
@@ -199,7 +216,7 @@ int main(void) {
         "db > Executed.\n"
         "db > Executed.\n"
         "db > Executed.\n"
-        "db > BTree:\n"
+        "db > Tree:\n"
         "- leaf (size 3)\n"
         "  - 1\n"
         "  - 2\n"
@@ -215,7 +232,7 @@ int main(void) {
         "db > Executed.\n"
         "db > Executed.\n"
         "db > Executed.\n"
-        "db > BTree:\n"
+        "db > Tree:\n"
         "- leaf (size 3)\n"
         "  - 1\n"
         "  - 2\n"
@@ -290,7 +307,7 @@ int main(void) {
   const char *persisted = "db > (1, user1, person1@example.com)\n"
                           "(2, user2, person2@example.com)\n"
                           "Executed.\n"
-                          "db > BTree:\n"
+                          "db > Tree:\n"
                           "- leaf (size 2)\n"
                           "  - 1\n"
                           "  - 2\n"
@@ -356,7 +373,7 @@ int main(void) {
              ".exit\n");
   check_tail("allows printing out the structure of a 3-leaf-node btree",
              tree_script,
-             "db > BTree:\n"
+             "db > Tree:\n"
              "- internal (size 1)\n"
              "  - leaf (size 7)\n"
              "    - 1\n"
@@ -430,7 +447,7 @@ int main(void) {
   }
   strcpy(ts, ".btree\n.exit\n");
   te = tree_expected;
-  te += sprintf(te, "db > BTree:\n- internal (size 3)\n");
+  te += sprintf(te, "db > Tree:\n- internal (size 3)\n");
   int leaf_ends[] = {7, 15, 22, 30};
   int first = 1;
   for (int leaf = 0; leaf < 4; leaf++) {
@@ -448,8 +465,173 @@ int main(void) {
   check_tail("allows printing out the structure of a 4-leaf-node btree",
              tree_script, tree_expected);
 
-  // From the book (part 13): with 1400 inserts the root internal node runs
-  // out of room, and splitting an internal node is not implemented yet.
+  // ---- Part 14: splitting internal nodes ----
+  // INTERNAL_NODE_MAX_CELLS is 3, so an internal node holds at most 4
+  // children. Sequential inserts fill leaves 7 + 7 + 7 + 13; the 35th insert
+  // splits the last leaf into a 5th child, which splits the root internal
+  // node: children {1-7, 8-14} stay left, {15-21, 22-28, 29-35} go right.
+  ts = tree_script;
+  for (int i = 1; i <= 35; i++) {
+    ts += sprintf(ts, "insert %d user%d person%d@example.com\n", i, i, i);
+  }
+  strcpy(ts, ".btree\n.exit\n");
+  te = tree_expected;
+  te += sprintf(te, "db > Tree:\n- internal (size 1)\n");
+  for (int leaf = 0; leaf < 5; leaf++) {
+    int lo = leaf * 7 + 1, hi = leaf * 7 + 7;
+    if (leaf == 0) {
+      te += sprintf(te, "  - internal (size 1)\n");
+    } else if (leaf == 2) {
+      te += sprintf(te, "  - key 14\n  - internal (size 2)\n");
+    }
+    te += sprintf(te, "    - leaf (size 7)\n");
+    for (int k = lo; k <= hi; k++) {
+      te += sprintf(te, "      - %d\n", k);
+    }
+    if (leaf != 1 && leaf != 4) {
+      te += sprintf(te, "    - key %d\n", hi);
+    }
+  }
+  strcpy(te, "db > ");
+  check_tail("splits the root internal node", tree_script, tree_expected);
+
+  // From the book (part 14): 64 out-of-order inserts split internal nodes and
+  // build a two-level internal tree over seven leaves.
+  int book_keys[] = {58, 56, 8,  54, 77, 7,  25, 71, 13, 22, 53, 51, 59,
+                     32, 36, 79, 10, 33, 20, 4,  35, 76, 49, 24, 70, 48,
+                     39, 15, 47, 30, 86, 31, 68, 37, 66, 63, 40, 78, 19,
+                     46, 14, 81, 72, 6,  50, 85, 67, 2,  55, 69, 5,  65,
+                     52, 1,  29, 9,  43, 75, 21, 82, 12, 18, 60, 44};
+  enum { BOOK_KEYS = sizeof(book_keys) / sizeof(book_keys[0]) };
+  ts = append_inserts(tree_script, book_keys, BOOK_KEYS);
+  strcpy(ts, ".btree\n.exit\n");
+  check_tail("allows printing out the structure of a 7-leaf-node btree",
+             tree_script,
+             "db > Tree:\n"
+             "- internal (size 1)\n"
+             "  - internal (size 2)\n"
+             "    - leaf (size 7)\n"
+             "      - 1\n      - 2\n      - 4\n      - 5\n"
+             "      - 6\n      - 7\n      - 8\n"
+             "    - key 8\n"
+             "    - leaf (size 11)\n"
+             "      - 9\n      - 10\n      - 12\n      - 13\n"
+             "      - 14\n      - 15\n      - 18\n      - 19\n"
+             "      - 20\n      - 21\n      - 22\n"
+             "    - key 22\n"
+             "    - leaf (size 8)\n"
+             "      - 24\n      - 25\n      - 29\n      - 30\n"
+             "      - 31\n      - 32\n      - 33\n      - 35\n"
+             "  - key 35\n"
+             "  - internal (size 3)\n"
+             "    - leaf (size 12)\n"
+             "      - 36\n      - 37\n      - 39\n      - 40\n"
+             "      - 43\n      - 44\n      - 46\n      - 47\n"
+             "      - 48\n      - 49\n      - 50\n      - 51\n"
+             "    - key 51\n"
+             "    - leaf (size 11)\n"
+             "      - 52\n      - 53\n      - 54\n      - 55\n"
+             "      - 56\n      - 58\n      - 59\n      - 60\n"
+             "      - 63\n      - 65\n      - 66\n"
+             "    - key 66\n"
+             "    - leaf (size 7)\n"
+             "      - 67\n      - 68\n      - 69\n      - 70\n"
+             "      - 71\n      - 72\n      - 75\n"
+             "    - key 75\n"
+             "    - leaf (size 8)\n"
+             "      - 76\n      - 77\n      - 78\n      - 79\n"
+             "      - 81\n      - 82\n      - 85\n      - 86\n"
+             "db > ");
+
+  // select walks the next_leaf chain across both internal subtrees and
+  // returns every row, in key order, with its own data.
+  ts = append_inserts(tree_script, book_keys, BOOK_KEYS);
+  strcpy(ts, "select\n.exit\n");
+  int sorted_keys[BOOK_KEYS];
+  memcpy(sorted_keys, book_keys, sizeof(book_keys));
+  for (int i = 1; i < BOOK_KEYS; i++) { // insertion sort
+    int k = sorted_keys[i], j = i - 1;
+    for (; j >= 0 && sorted_keys[j] > k; j--) {
+      sorted_keys[j + 1] = sorted_keys[j];
+    }
+    sorted_keys[j + 1] = k;
+  }
+  te = tree_expected;
+  te += sprintf(te, "db > ");
+  for (int i = 0; i < BOOK_KEYS; i++) {
+    te = append_rows(te, sorted_keys[i], sorted_keys[i]);
+  }
+  strcpy(te, "Executed.\ndb > ");
+  check_tail("selects every row after internal nodes split", tree_script,
+             tree_expected);
+
+  // Duplicate lookups must descend through two internal levels: try keys
+  // at both ends of both subtrees and on either side of the root key (35).
+  int deep_duplicates[] = {1, 8, 35, 36, 75, 86};
+  enum { DEEP_DUPS = sizeof(deep_duplicates) / sizeof(deep_duplicates[0]) };
+  ts = append_inserts(tree_script, book_keys, BOOK_KEYS);
+  te = tree_expected;
+  for (int i = 0; i < DEEP_DUPS; i++) {
+    ts += sprintf(ts, "insert %d other other@example.com\n",
+                  deep_duplicates[i]);
+    te += sprintf(te, "db > Error: Duplicate key.\n");
+  }
+  strcpy(ts, ".exit\n");
+  strcpy(te, "db > ");
+  check_tail("rejects duplicate keys in a multi-level internal tree",
+             tree_script, tree_expected);
+
+  // Parent pointers live on disk. After reopening, further splits must still
+  // find the right parents: insert 1..35 (root internal split), close, then
+  // insert 36..70 in a second run, which splits internal nodes again.
+  unlink(DB_FILE);
+  ts = tree_script;
+  for (int i = 1; i <= 35; i++) {
+    ts += sprintf(ts, "insert %d user%d person%d@example.com\n", i, i, i);
+  }
+  strcpy(ts, ".exit\n");
+  free(run_db_keep(tree_script));
+  ts = tree_script;
+  for (int i = 36; i <= 70; i++) {
+    ts += sprintf(ts, "insert %d user%d person%d@example.com\n", i, i, i);
+  }
+  strcpy(ts, "select\n.exit\n");
+  te = tree_expected;
+  te += sprintf(te, "db > ");
+  te = append_rows(te, 1, 70);
+  strcpy(te, "Executed.\ndb > ");
+  char *reopened_tree = run_db_keep(tree_script);
+  size_t rt_len = strlen(reopened_tree), te_len = strlen(tree_expected);
+  const char *rt_tail = rt_len >= te_len
+                            ? reopened_tree + rt_len - te_len
+                            : reopened_tree;
+  report("splits internal nodes in a reopened database",
+         strcmp(rt_tail, tree_expected) == 0, tree_expected, rt_tail);
+  free(reopened_tree);
+  unlink(DB_FILE);
+
+  // Descending inserts always land in the leftmost leaf, so internal splits
+  // repeatedly insert at index 0. 200 rows make the tree at least 3 internal
+  // levels deep.
+  enum { DESC_ROWS = 200 };
+  char *desc_script = malloc(DESC_ROWS * 64 + 32);
+  char *desc_expected = malloc(DESC_ROWS * 64 + 32);
+  char *ds = desc_script;
+  for (int i = DESC_ROWS; i >= 1; i--) {
+    ds += sprintf(ds, "insert %d user%d person%d@example.com\n", i, i, i);
+  }
+  strcpy(ds, "select\n.exit\n");
+  ds = desc_expected;
+  ds += sprintf(ds, "db > ");
+  ds = append_rows(ds, 1, DESC_ROWS);
+  strcpy(ds, "Executed.\ndb > ");
+  check_tail("selects every row after descending inserts", desc_script,
+             desc_expected);
+  free(desc_script);
+  free(desc_expected);
+
+  // Internal nodes now split, so the next limit is the pager:
+  // TABLE_MAX_PAGES (100) pages run out before 1400 sequential rows fit.
   enum { MANY_ROWS = 1400 };
   char *big_script = malloc(MANY_ROWS * 64 + 16);
   char *bs = big_script;
@@ -459,7 +641,7 @@ int main(void) {
   strcpy(bs, ".exit\n");
   check_tail("prints error message when table is full", big_script,
              "db > Executed.\n"
-             "db > Need to implement splitting internal node\n");
+             "db > Tried to fetch page number out of bounds. 100 >= 100\n");
   free(big_script);
 
   printf("\n%d passed, %d failed\n", pass, fail);
