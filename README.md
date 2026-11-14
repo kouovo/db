@@ -6,8 +6,20 @@ A small SQLite-like database written in C, following the
 ## Build
 
 ```sh
-gcc main.c -o db
+gcc main.c row.c pager.c node.c btree.c repl.c -o db
 ```
+
+## Layout
+
+| File | Contents |
+| --- | --- |
+| `util.h` | `node_at` helper |
+| `row.h/.c` | `Row` and its serialized layout |
+| `pager.h/.c` | page cache over the db file |
+| `node.h/.c` | B-tree node layout, accessors, `.btree` / `.constants` output |
+| `btree.h/.c` | `Table`, `Cursor`, search, insert/split, `db_open` / `db_close` |
+| `repl.h/.c` | input buffer, meta commands, prepare/execute |
+| `main.c` | REPL loop |
 
 ## Usage
 
