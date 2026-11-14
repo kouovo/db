@@ -91,8 +91,8 @@ static void report(const char *name, int ok, const char *expected,
 // Appends one insert line per key to `s` and returns the new end of `s`.
 static char *append_inserts(char *s, const int *keys, size_t count) {
   for (size_t i = 0; i < count; i++) {
-    s += sprintf(s, "insert %d user%d person%d@example.com\n", keys[i],
-                 keys[i], keys[i]);
+    s += sprintf(s, "insert %d user%d person%d@example.com\n", keys[i], keys[i],
+                 keys[i]);
   }
   return s;
 }
@@ -440,8 +440,7 @@ int main(void) {
                         22, 19, 2,  1,  21, 11, 6,  20, 5,  8,
                         9,  3,  12, 27, 17, 16, 13, 24, 25, 28};
   ts = tree_script;
-  for (size_t i = 0; i < sizeof(out_of_order) / sizeof(out_of_order[0]);
-       i++) {
+  for (size_t i = 0; i < sizeof(out_of_order) / sizeof(out_of_order[0]); i++) {
     int k = out_of_order[i];
     ts += sprintf(ts, "insert %d user%d person%d@example.com\n", k, k, k);
   }
@@ -572,8 +571,8 @@ int main(void) {
   ts = append_inserts(tree_script, book_keys, BOOK_KEYS);
   te = tree_expected;
   for (int i = 0; i < DEEP_DUPS; i++) {
-    ts += sprintf(ts, "insert %d other other@example.com\n",
-                  deep_duplicates[i]);
+    ts +=
+        sprintf(ts, "insert %d other other@example.com\n", deep_duplicates[i]);
     te += sprintf(te, "db > Error: Duplicate key.\n");
   }
   strcpy(ts, ".exit\n");
@@ -602,9 +601,8 @@ int main(void) {
   strcpy(te, "Executed.\ndb > ");
   char *reopened_tree = run_db_keep(tree_script);
   size_t rt_len = strlen(reopened_tree), te_len = strlen(tree_expected);
-  const char *rt_tail = rt_len >= te_len
-                            ? reopened_tree + rt_len - te_len
-                            : reopened_tree;
+  const char *rt_tail =
+      rt_len >= te_len ? reopened_tree + rt_len - te_len : reopened_tree;
   report("splits internal nodes in a reopened database",
          strcmp(rt_tail, tree_expected) == 0, tree_expected, rt_tail);
   free(reopened_tree);
@@ -629,6 +627,35 @@ int main(void) {
              desc_expected);
   free(desc_script);
   free(desc_expected);
+
+  // Regression: these 98 keys build a three-level tree in which the book's
+  // version of internal_node_split_and_insert left internal keys that did
+  // not match their subtrees. select still listed every row (it follows
+  // next_leaf), but lookups from the root went down the wrong path, so some
+  // re-inserted keys were not reported as duplicates.
+  int deep_keys[] = {
+      693, 761, 168, 4,   744, 934, 752, 861, 839, 960, 172, 803, 80,  835,
+      408, 545, 108, 243, 125, 175, 164, 808, 921, 549, 233, 968, 536, 39,
+      548, 58,  625, 195, 716, 8,   896, 235, 403, 450, 995, 913, 297, 27,
+      374, 134, 456, 900, 252, 228, 510, 483, 937, 656, 606, 328, 457, 583,
+      546, 181, 323, 56,  903, 352, 107, 302, 257, 425, 416, 508, 967, 247,
+      200, 255, 996, 939, 444, 557, 506, 648, 350, 385, 935, 987, 378, 393,
+      185, 633, 413, 446, 469, 356, 379, 476, 462, 526, 518, 509, 309, 515};
+  enum { DEEP_KEYS = sizeof(deep_keys) / sizeof(deep_keys[0]) };
+  char *deep_script = malloc(DEEP_KEYS * 2 * 64 + 16);
+  char *deep_expected = malloc(DEEP_KEYS * 64 + 16);
+  ds = append_inserts(deep_script, deep_keys, DEEP_KEYS);
+  te = deep_expected;
+  for (int i = 0; i < DEEP_KEYS; i++) {
+    ds += sprintf(ds, "insert %d other other@example.com\n", deep_keys[i]);
+    te += sprintf(te, "db > Error: Duplicate key.\n");
+  }
+  strcpy(ds, ".exit\n");
+  strcpy(te, "db > ");
+  check_tail("finds every key in a three-level tree", deep_script,
+             deep_expected);
+  free(deep_script);
+  free(deep_expected);
 
   // Internal nodes now split, so the next limit is the pager:
   // TABLE_MAX_PAGES (100) pages run out before 1400 sequential rows fit.
